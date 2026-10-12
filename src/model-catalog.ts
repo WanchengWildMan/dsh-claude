@@ -131,6 +131,18 @@ function withStableAliases(rows: readonly ClaudeModelRow[]): readonly ClaudeMode
 
 /** Ids a concrete CLI id must not claim: the lineup's own alias rows and the
  *  stable aliases, whose meaning a persisted selection depends on. */
+/** Several routes can resolve to the same model -- a gateway that maps aliases
+ *  onto one model makes `sonnet` and `haiku` both report `deepseek-flash` -- and
+ *  the selector prints the reported name, so those rows read alike and the
+ *  choice between them is a coin flip. Append the route id to the rows whose
+ *  name collides, leaving an unambiguous name untouched. */
+function distinctDisplayNames(rows: readonly ClaudeModelRow[]): readonly ClaudeModelRow[] {
+  const count = new Map<string, number>()
+  for (const row of rows) count.set(row.name, (count.get(row.name) ?? 0) + 1)
+  return rows.map(row =>
+    (count.get(row.name) ?? 0) > 1 ? { ...row, name: `${row.name} (${row.id})` } : row)
+}
+
 function reservedAliases(models: readonly ModelInfo[]): Set<string> {
   const reserved = new Set(SEED.map(row => row.id))
   for (const row of models) if (claudeModelAlias(row.value) === row.value) reserved.add(row.value)
@@ -141,7 +153,7 @@ export function recordClaudeModels(models: readonly ModelInfo[]): void {
   if (models.length === 0) return
   const taken = new Set<string>()
   const reserved = reservedAliases(models)
-  latest = withStableAliases(models.map(row => {
+  latest = distinctDisplayNames(withStableAliases(models.map(row => {
     const alias = claudeModelAlias(row.value)
     // Two rows of one family in the same lineup (a previous generation kept
     // alongside the current one) cannot share an id; the later row keeps the

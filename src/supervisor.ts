@@ -51,7 +51,7 @@ export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
  * summary has to send the whole oversized transcript. Pinning the window below
  * the real limit makes compaction fire while it can still succeed.
  */
-export const DEFAULT_AUTO_COMPACT_WINDOW = 180_000
+export const DEFAULT_AUTO_COMPACT_WINDOW = 500_000
 
 /** The CLI denies a window below 100k; anything above the model limit is pointless. */
 export function autoCompactWindow(): number {

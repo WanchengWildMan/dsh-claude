@@ -255,6 +255,12 @@ export function claudeModelRow(id: string): ClaudeModelRow | undefined {
   return rows.find(row => row.id === id)
     ?? rows.find(row => row.value === id)
     ?? rows.find(row => row.id === claudeModelAlias(id))
+    // A session can persist the model's own name (for example the gateway's
+    // `deepseek-flash`) from a lineup that listed it that way. The alias chain
+    // above cannot resolve it, so match the reported display name too --
+    // otherwise the raw name reaches the CLI, which then sizes the context
+    // window for a different model.
+    ?? rows.find(row => row.name === id)
 }
 
 /**

@@ -43,6 +43,21 @@ import type {} from '@deepseek-ai/dsh-tool-todo'
 import { ClaudeTaskBoard, carriedTodos, todosFromTodoWrite, type TodoItem } from './todo-bridge.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
+
+/**
+ * Claude Code leaves auto-compact off when it runs under the Agent SDK. A long
+ * session then grows past the model's hard context limit, and once past it every
+ * request is rejected — including the compaction request itself, because the
+ * summary has to send the whole oversized transcript. Pinning the window below
+ * the real limit makes compaction fire while it can still succeed.
+ */
+export const DEFAULT_AUTO_COMPACT_WINDOW = 180_000
+
+/** The CLI denies a window below 100k; anything above the model limit is pointless. */
+export function autoCompactWindow(): number {
+  const raw = Number.parseInt(process.env['DSH_CLAUDE_AUTOCOMPACT_WINDOW'] ?? '', 10)
+  return Number.isFinite(raw) && raw >= 100_000 && raw <= 1_000_000 ? raw : DEFAULT_AUTO_COMPACT_WINDOW
+}
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
 /** Control requests must settle; a wedged one must not clog the metadata chain. */
 export const CLAUDE_METADATA_TIMEOUT_MS = 15_000
@@ -1285,7 +1300,14 @@ export class ClaudeSupervisor {
             : { effort: thinkingMode }),
       // Teammates run inside the CLI process: Desktop has no terminal to put
       // them in, and the team UI reads them off the task stream.
-      settings: { teammateMode: 'in-process', ...(thinkingMode === 'ultracode' ? { ultracode: true } : {}) } satisfies ClaudeSettings,
+      settings: {
+        teammateMode: 'in-process',
+        // Without these two, an SDK-driven session silently outgrows the model
+        // window and can then be neither compacted nor resumed.
+        autoCompactEnabled: true,
+        autoCompactWindow: autoCompactWindow(),
+        ...(thinkingMode === 'ultracode' ? { ultracode: true } : {}),
+      } satisfies ClaudeSettings,
     }
     entry.query = this.#queryFactory({ prompt: input, options })
     entry.pump = this.#runDetached(() => this.#pump(entry))

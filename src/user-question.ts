@@ -7,7 +7,20 @@ import type {
 } from '@deepseek-ai/dsh-user-questions'
 import type { ClaudeActivityInput, ClaudeActivityCursor } from './events.ts'
 
-export type UserQuestionRequester = Pick<UserQuestionService, 'ask'>
+/**
+ * `askTimed` is the requester DeepSeek Harness 0.2.x exposes: the call carries the
+ * tool-use id the front end claims the answer against, and it expires. Older hosts
+ * only ship `ask`, so the bridge keeps both and falls back at call time.
+ */
+export interface UserQuestionTimedRequester {
+  askTimed?: (
+    request: Parameters<UserQuestionService['ask']>[0],
+    toolUseId: string,
+    timeoutMs: number,
+  ) => Promise<(Awaited<ReturnType<UserQuestionService['ask']>> & { pending?: boolean }) | null | undefined>
+}
+
+export type UserQuestionRequester = Pick<UserQuestionService, 'ask'> & UserQuestionTimedRequester
 
 export interface ActiveUserQuestionContext {
   agent: Agent
@@ -24,6 +37,8 @@ export type UserQuestionBridge = (
 
 const FAILURE_MESSAGE = 'DeepSeek Harness could not collect an answer; the question was cancelled.'
 const INVALID_MESSAGE = 'Claude Code sent an invalid user-question request; the question was cancelled.'
+/** A question nobody answers must release Claude's turn instead of parking it forever. */
+const QUESTION_ANSWER_TIMEOUT_MS = 600_000
 
 function failureMessage(error: unknown): string {
   const code = error !== null && typeof error === 'object' && 'code' in error
@@ -105,11 +120,13 @@ export function createUserQuestionBridge(
         title: 'Claude asked a question',
         summary: questions.length === 1 ? questions[0]!.question : `Claude asked ${questions.length} questions`,
       })
-      const response = await userQuestions.ask({
-        questions,
-        agent: active.agent,
-        signal: options.signal,
-      })
+      const request = { questions, agent: active.agent, signal: options.signal }
+      const response = userQuestions.askTimed === undefined
+        ? await userQuestions.ask(request)
+        : await userQuestions.askTimed(request, options.toolUseID, QUESTION_ANSWER_TIMEOUT_MS)
+      if (response === null || response === undefined || response.pending === true) {
+        return deny('The question waited 10 minutes without an answer and was cancelled.', options.toolUseID)
+      }
       const answersById = new Map(response.answers.map(answer => [answer.id, answer]))
       const answers = Object.fromEntries(questions.map(question => [
         question.question,
